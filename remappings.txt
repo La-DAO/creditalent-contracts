@@ -1,0 +1,3 @@
+@openzeppelin-contracts/contracts/=lib/openzeppelin-contracts/contracts/
+@openzepplein-upgradeable/contracts=lib/openzeppelin-contracts-upgradeable/contracts/
+@morpho/contracts/=lib/morpho/src/
