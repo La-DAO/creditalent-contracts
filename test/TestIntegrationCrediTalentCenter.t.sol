@@ -96,6 +96,35 @@ contract TestIntegrationCrediTalentCenter is Test {
         assertEq(position.borrowShares, 0);
     }
 
+    function test_useTheCreditLine() public {
+        address applicant = User1.addr;
+        do_applyToCredit(applicant);
+
+        address underWriter = User2.addr;
+        uint256 tenThousandXocs = 10000e18;
+        do_applyToUnderwrite(underWriter, tenThousandXocs);
+
+        uint256 floatingRate = type(uint256).max;
+        vm.prank(underWriter);
+        talentCenter.approveCredit(applicant, 1, tenThousandXocs, floatingRate);
+
+        IMorpho morpho = IMorpho(MORPHO);
+
+        MarketParams memory marketParams = MarketParams({
+            loanToken: address(xocolatl),
+            collateralToken: address(creditPoints),
+            oracle: address(talentCenter),
+            irm: MOPRHO_ADAPTIVEIRM,
+            lltv: talentCenter.DEFAULT_LLTV()
+        });
+
+        uint256 fiveThousandXocs = 5000e18;
+        vm.prank(applicant);
+        morpho.borrow(marketParams, fiveThousandXocs, 0, applicant, applicant);
+
+        assertEq(xocolatl.balanceOf(applicant), fiveThousandXocs);
+    }
+
     function load_tokens_to_user(MockToken token, address user, uint256 amount) internal {
         token.mint(user, amount);
     }
