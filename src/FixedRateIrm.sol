@@ -26,7 +26,7 @@ contract FixedRateIrm {
     event SetBorrowRate(uint256 newBorrowRate);
 
     /* CONSTANTS */
-    uint256 public constant MAX_BORROW_RATE = 8.0 ether / uint256(365 days);
+    uint256 public constant MAX_BORROW_RATE = 10.0 ether;
 
     /* STORAGE */
     uint256 public borrowRateStored;
