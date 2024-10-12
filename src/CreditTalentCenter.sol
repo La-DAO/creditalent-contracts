@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: MIT
 pragma solidity ^0.8.20;
 
-import {CrediPoints} from "./CrediPoints.sol";
+import {CreditPoints} from "./CreditPoints.sol";
 import {FixedRateIrm} from "./FixedRateIrm.sol";
 import {ERC1967Proxy} from "@openzeppelin/contracts/proxy/ERC1967/ERC1967Proxy.sol";
 import {MarketParamsLib} from "@morpho/contracts/libraries/MarketParamsLib.sol";
@@ -27,22 +27,21 @@ struct Underwriter {
 struct Application {
     uint256 id;
     address applicant;
-    address receiver;
     bytes32 dataHash;
     ApplicationStatus status;
 }
 
-contract CrediTalentCenter is IOracle, AccessControl {
+contract CreditTalentCenter is IOracle, AccessControl {
     using MarketParamsLib for MarketParams;
     using SafeERC20 for IERC20;
 
     // cast keccak 'UNDERWRITER_ROLE'
     bytes32 public constant UNDERWRITER_ROLE = 0xf63acc52fa4ad8a2695e14522f3df504db5c225cdd3d3a5acd3569b444572187;
     uint256 public constant DEFAULT_LLTV = 0.98e18;
-    uint256 public constant DEFAULT_INTEREST_RATE = type(uint256).max;
+    uint256 public constant FLOATING_RATE = type(uint256).max;
 
     /// Events
-    event ApplicationCreated(uint256 id, address indexed applicant, address receiver, bytes32 dataHash);
+    event ApplicationCreated(uint256 id, address indexed applicant, bytes32 dataHash);
     event ApplicationApproved(
         uint256 id, address indexed applicant, address indexed underwriter, uint256 amount, uint256 interestRate
     );
@@ -65,16 +64,16 @@ contract CrediTalentCenter is IOracle, AccessControl {
     address public immutable adpativeIrm;
 
     uint256 public applications;
-    uint256 public totalCrediShares;
+    uint256 public totalcreditShares;
 
-    mapping(address => uint256) public crediShares;
+    mapping(address => uint256) public creditShares;
     mapping(uint256 => FixedRateIrm) public fixedRateIrms; // InterestRate (in WAD) => IIrm address
     mapping(address => Underwriter) public underwriters;
     mapping(address => Application) public applicationInfo;
 
-    constructor(address underwritingAsset_, CrediPoints crediPointsImpl_, IMorpho morpho_, address adaptiveIrm_) {
+    constructor(address underwritingAsset_, CreditPoints creditPointsImpl_, IMorpho morpho_, address adaptiveIrm_) {
         _checkZeroAddress(underwritingAsset_);
-        _checkZeroAddress(address(crediPointsImpl_));
+        _checkZeroAddress(address(creditPointsImpl_));
         _checkZeroAddress(address(morpho_));
         _checkZeroAddress(adaptiveIrm_);
 
@@ -82,17 +81,18 @@ contract CrediTalentCenter is IOracle, AccessControl {
         _grantRole(UNDERWRITER_ROLE, msg.sender);
         underwritingAsset = underwritingAsset_;
         bytes memory initData = abi.encodeWithSelector(
-            CrediPoints.initialize.selector,
+            CreditPoints.initialize.selector,
             IERC20Metadata(underwritingAsset_).decimals(),
             address(this),
             underwritingAsset_
         );
-        creditPoints = address(new ERC1967Proxy(address(crediPointsImpl_), initData));
+        creditPoints = address(new ERC1967Proxy(address(creditPointsImpl_), initData));
         morpho = morpho_;
         adpativeIrm = adaptiveIrm_;
         MarketParams memory marketParams =
             MarketParams(underwritingAsset_, creditPoints, address(this), address(adaptiveIrm_), DEFAULT_LLTV);
         morpho.createMarket(marketParams);
+        CreditPoints(creditPoints).setApprovedReceiver(address(morpho_), true);
     }
 
     /// @inheritdoc IOracle
@@ -105,14 +105,13 @@ contract CrediTalentCenter is IOracle, AccessControl {
     /**
      * @notice Apply for credit
      * @param dataHash_  TBD identifier for the data verification
-     * @param receiver_  Address to receive the credit
      */
-    function applyToCredit(bytes32 dataHash_, address receiver_) public {
+    function applyToCredit(bytes32 dataHash_) public {
         // TODO: Add signature verification
         require(applicationInfo[msg.sender].applicant == address(0), CrediTalentCenter_applicationAlreadyExists());
         uint256 id = _useApplicationNumber();
-        applicationInfo[msg.sender] = Application(id, msg.sender, receiver_, dataHash_, ApplicationStatus.Pending);
-        emit ApplicationCreated(id, msg.sender, receiver_, dataHash_);
+        applicationInfo[msg.sender] = Application(id, msg.sender, dataHash_, ApplicationStatus.Pending);
+        emit ApplicationCreated(id, msg.sender, dataHash_);
     }
 
     /**
@@ -123,7 +122,7 @@ contract CrediTalentCenter is IOracle, AccessControl {
         SafeERC20.safeTransferFrom(IERC20(underwritingAsset), msg.sender, address(this), amount_);
         underwriters[msg.sender] = Underwriter(msg.sender, amount_);
         _grantRole(UNDERWRITER_ROLE, msg.sender);
-        CrediPoints(creditPoints).mint(address(this), amount_);
+        CreditPoints(creditPoints).mint(address(this), amount_);
         emit UnderwriterSet(msg.sender, amount_);
     }
 
@@ -142,17 +141,20 @@ contract CrediTalentCenter is IOracle, AccessControl {
         require(applicationInfo[user_].status == ApplicationStatus.Pending, CreditTalentCenter_applicationNotPending());
         require(underwriters[msg.sender].approvalAmount >= amount_, CreditTalentCenter_insufficientUnderwritingPower());
 
-        address rateModel = iRateWad_ == 0 ? adpativeIrm : address(fixedRateIrms[iRateWad_]);
+        address rateModel = iRateWad_ == FLOATING_RATE ? adpativeIrm : address(fixedRateIrms[iRateWad_]);
         if (rateModel == address(0)) revert CreditTalentCenter_invalidInterestRate();
 
         underwriters[msg.sender].approvalAmount -= amount_;
-        crediShares[msg.sender] += amount_;
-        totalCrediShares += amount_;
+        creditShares[msg.sender] += amount_;
+        totalcreditShares += amount_;
 
         applicationInfo[user_].status = ApplicationStatus.Approved;
-        morpho.supplyCollateral(
-            MarketParams(underwritingAsset, creditPoints, address(this), rateModel, DEFAULT_LLTV), amount_, user_, ""
-        );
+        MarketParams memory marketParams =
+            MarketParams(underwritingAsset, creditPoints, address(this), rateModel, DEFAULT_LLTV);
+        IERC20(creditPoints).approve(address(morpho), amount_);
+        morpho.supplyCollateral(marketParams, amount_, user_, "");
+        IERC20(underwritingAsset).approve(address(morpho), amount_);
+        morpho.supply(marketParams, amount_, 0, user_, "");
         emit ApplicationApproved(applicationId_, user_, msg.sender, amount_, iRateWad_);
     }
 

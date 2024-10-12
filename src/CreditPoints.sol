@@ -16,7 +16,13 @@ struct CrediPointsStorage {
 }
 
 /// @custom:security-contact security@xocolatl.xyz
-contract CrediPoints is Initializable, ERC20Upgradeable, OwnableUpgradeable, ERC20PermitUpgradeable, UUPSUpgradeable {
+contract CreditPoints is
+    Initializable,
+    ERC20Upgradeable,
+    OwnableUpgradeable,
+    ERC20PermitUpgradeable,
+    UUPSUpgradeable
+{
     /// Events
     event ApprovedTransactorSet(address indexed transactor, bool approved);
 
@@ -59,6 +65,10 @@ contract CrediPoints is Initializable, ERC20Upgradeable, OwnableUpgradeable, ERC
     function decimals() public view override returns (uint8) {
         CrediPointsStorage storage $ = _getCrediPointsStorage();
         return $.decimals;
+    }
+
+    function setApprovedReceiver(address receiver_, bool approved_) public onlyOwner {
+        _setApprovedReceiver(receiver_, approved_);
     }
 
     function isApprovedReceiver(address receiver_) public view returns (bool) {
