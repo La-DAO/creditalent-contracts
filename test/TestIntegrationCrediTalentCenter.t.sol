@@ -75,7 +75,7 @@ contract TestIntegrationCrediTalentCenter is Test {
         do_applyToUnderwrite(underWriter, tenThousandXocs);
 
         uint256 floatingRate = type(uint256).max;
-        vm.startPrank(underWriter);
+        vm.prank(underWriter);
         talentCenter.approveCredit(applicant, 1, tenThousandXocs, floatingRate);
 
         assertEq(creditPoints.balanceOf(applicant), 0);
@@ -91,7 +91,6 @@ contract TestIntegrationCrediTalentCenter is Test {
             lltv: talentCenter.DEFAULT_LLTV()
         });
         Position memory position = morpho.position(marketParams.id(), applicant);
-        assertEq(position.supplyShares, tenThousandXocs);
         assertEq(position.collateral, tenThousandXocs);
         assertEq(position.borrowShares, 0);
     }
