@@ -3,7 +3,7 @@ pragma solidity ^0.8.20;
 
 import {Test} from "forge-std/Test.sol";
 import {VmSafe} from "forge-std/StdUtils.sol";
-import {console} from "forge-std/Console.sol";
+import {console} from "forge-std/console.sol";
 import {CreditTalentCenter} from "../src/CreditTalentCenter.sol";
 import {CreditPoints} from "../src/CreditPoints.sol";
 import {MockToken} from "./mocks/MockToken.sol";
