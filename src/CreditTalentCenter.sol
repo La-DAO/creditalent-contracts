@@ -5,7 +5,8 @@ import {CreditPoints} from "./CreditPoints.sol";
 import {FixedRateIrm} from "./FixedRateIrm.sol";
 import {ERC1967Proxy} from "@openzeppelin/contracts/proxy/ERC1967/ERC1967Proxy.sol";
 import {MarketParamsLib} from "@morpho/contracts/libraries/MarketParamsLib.sol";
-import {IMorpho, Id, MarketParams, Market} from "@morpho/contracts/interfaces/IMorpho.sol";
+import {SharesMathLib} from "@morpho/contracts/libraries/SharesMathLib.sol";
+import {IMorpho, Id, MarketParams, Market, Position} from "@morpho/contracts/interfaces/IMorpho.sol";
 import {IIrm} from "@morpho/contracts/interfaces/IIrm.sol";
 import {IOracle} from "@morpho/contracts/interfaces/IOracle.sol";
 import {AccessControl} from "@openzeppelin/contracts/access/AccessControl.sol";
@@ -28,11 +29,13 @@ struct Application {
     uint256 id;
     address applicant;
     bytes32 dataHash;
+    address underwriter;
     ApplicationStatus status;
 }
 
 contract CreditTalentCenter is IOracle, AccessControl {
     using MarketParamsLib for MarketParams;
+    using SharesMathLib for uint256;
     using SafeERC20 for IERC20;
 
     // cast keccak 'UNDERWRITER_ROLE'
@@ -69,7 +72,7 @@ contract CreditTalentCenter is IOracle, AccessControl {
     mapping(address => uint256) public creditShares;
     mapping(uint256 => FixedRateIrm) public fixedRateIrms; // InterestRate (in WAD) => IIrm address
     mapping(address => Underwriter) public underwriters;
-    mapping(address => Application) public applicationInfo;
+    mapping(address => Application) public applicationInfo; // User address => Application
 
     constructor(address underwritingAsset_, CreditPoints creditPointsImpl_, IMorpho morpho_, address adaptiveIrm_) {
         _checkZeroAddress(underwritingAsset_);
@@ -95,12 +98,30 @@ contract CreditTalentCenter is IOracle, AccessControl {
         CreditPoints(creditPoints).setApprovedReceiver(address(morpho_), true);
     }
 
+    /// View functions
+
     /// @inheritdoc IOracle
     function price() external view returns (uint256) {
         uint256 underwriteAssetDecimals = IERC20Metadata(underwritingAsset).decimals();
         uint256 scaleFactor = 10 ** (36 + underwriteAssetDecimals - IERC20Metadata(creditPoints).decimals());
         return scaleFactor * 10 ** underwriteAssetDecimals;
     }
+
+    function getUserLoanInfo(address user_) public view returns (uint256 creditLine, uint256 borrowed) {
+        Application memory application = applicationInfo[user_];
+        if (application.underwriter == address(0)) {
+            return (0, 0);
+        }
+        creditLine = creditShares[application.underwriter];
+
+        MarketParams memory marketParams =
+            MarketParams(underwritingAsset, creditPoints, address(this), adpativeIrm, DEFAULT_LLTV);
+        Position memory morphoPosition = morpho.position(marketParams.id(), user_);
+        Market memory market = morpho.market(marketParams.id());
+        borrowed = uint256(morphoPosition.borrowShares).toAssetsUp(market.totalBorrowAssets, market.totalBorrowShares);
+    }
+
+    /// Core functions
 
     /**
      * @notice Apply for credit
@@ -110,7 +131,7 @@ contract CreditTalentCenter is IOracle, AccessControl {
         // TODO: Add signature verification
         require(applicationInfo[msg.sender].applicant == address(0), CrediTalentCenter_applicationAlreadyExists());
         uint256 id = _useApplicationNumber();
-        applicationInfo[msg.sender] = Application(id, msg.sender, dataHash_, ApplicationStatus.Pending);
+        applicationInfo[msg.sender] = Application(id, msg.sender, dataHash_, address(0), ApplicationStatus.Pending);
         emit ApplicationCreated(id, msg.sender, dataHash_);
     }
 
@@ -131,7 +152,7 @@ contract CreditTalentCenter is IOracle, AccessControl {
      * @param user_ User address
      * @param applicationId_ Application ID
      * @param amount_ Amount of credit to approve
-     * @param iRateWad_ pass 0 for adaptive interest rate, o interest rate in WAD for fixed rate
+     * @param iRateWad_ pass 0 for adaptive interest rate, or interest rate in WAD for fixed rate
      */
     function approveCredit(address user_, uint256 applicationId_, uint256 amount_, uint256 iRateWad_)
         external
@@ -149,12 +170,14 @@ contract CreditTalentCenter is IOracle, AccessControl {
         totalcreditShares += amount_;
 
         applicationInfo[user_].status = ApplicationStatus.Approved;
+        applicationInfo[user_].underwriter = msg.sender;
+
         MarketParams memory marketParams =
             MarketParams(underwritingAsset, creditPoints, address(this), rateModel, DEFAULT_LLTV);
         IERC20(creditPoints).approve(address(morpho), amount_);
         morpho.supplyCollateral(marketParams, amount_, user_, "");
         IERC20(underwritingAsset).approve(address(morpho), amount_);
-        morpho.supply(marketParams, amount_, 0, user_, "");
+        morpho.supply(marketParams, amount_, 0, address(this), "");
         emit ApplicationApproved(applicationId_, user_, msg.sender, amount_, iRateWad_);
     }
 
