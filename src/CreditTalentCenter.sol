@@ -107,7 +107,7 @@ contract CreditTalentCenter is IOracle, AccessControl {
         return scaleFactor * 10 ** underwriteAssetDecimals;
     }
 
-    function getUserLoanInfo(address user_) public view returns (uint256 creditLine, uint256 borrowed) {
+    function getUserLoanInfo(address user_) external view returns (uint256 creditLine, uint256 borrowed) {
         Application memory application = applicationInfo[user_];
         if (application.underwriter == address(0)) {
             return (0, 0);
