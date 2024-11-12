@@ -1,17 +1,19 @@
 // SPDX-License-Identifier: MIT
 pragma solidity ^0.8.20;
 
-import {CreditPoints} from "./CreditPoints.sol";
-import {FixedRateIrm} from "./FixedRateIrm.sol";
+import {CreditPoints} from "../CreditPoints.sol";
+import {FixedRateIrm} from "../FixedRateIrm.sol";
 import {ERC1967Proxy} from "@openzeppelin/contracts/proxy/ERC1967/ERC1967Proxy.sol";
 import {MarketParamsLib} from "@morpho/contracts/libraries/MarketParamsLib.sol";
 import {SharesMathLib} from "@morpho/contracts/libraries/SharesMathLib.sol";
 import {IMorpho, Id, MarketParams, Market, Position} from "@morpho/contracts/interfaces/IMorpho.sol";
 import {IIrm} from "@morpho/contracts/interfaces/IIrm.sol";
 import {IOracle} from "@morpho/contracts/interfaces/IOracle.sol";
-import {AccessControl} from "@openzeppelin/contracts/access/AccessControl.sol";
 import {SafeERC20} from "@openzeppelin/contracts/token/ERC20/utils/SafeERC20.sol";
 import {IERC20, IERC20Metadata} from "@openzeppelin/contracts/token/ERC20/extensions/IERC20Metadata.sol";
+import {Initializable} from "@openzeppelin/contracts-upgradeable/proxy/utils/Initializable.sol";
+import {AccessControlUpgradeable} from "@openzeppelin/contracts-upgradeable/access/AccessControlUpgradeable.sol";
+import {UUPSUpgradeable} from "@openzeppelin/contracts-upgradeable/proxy/utils/UUPSUpgradeable.sol";
 
 enum ApplicationStatus {
     None,
@@ -33,7 +35,7 @@ struct Application {
     ApplicationStatus status;
 }
 
-contract CreditTalentCenter is IOracle, AccessControl {
+contract CreditTalentCenterUpgradeable is Initializable, IOracle, AccessControlUpgradeable, UUPSUpgradeable {
     using MarketParamsLib for MarketParams;
     using SharesMathLib for uint256;
     using SafeERC20 for IERC20;
@@ -61,10 +63,10 @@ contract CreditTalentCenter is IOracle, AccessControl {
     error CreditTalentCenter_insufficientUnderwritingPower();
     error CreditTalentCenter_invalidInterestRate();
 
-    address public immutable underwritingAsset;
-    address public immutable creditPoints;
-    IMorpho public immutable morpho;
-    address public immutable adpativeIrm;
+    address public underwritingAsset;
+    address public creditPoints;
+    IMorpho public morpho;
+    address public adpativeIrm;
 
     uint256 public applications;
     uint256 public totalcreditShares;
@@ -74,7 +76,16 @@ contract CreditTalentCenter is IOracle, AccessControl {
     mapping(address => Underwriter) public underwriters;
     mapping(address => Application) public applicationInfo; // User address => Application
 
-    constructor(address underwritingAsset_, CreditPoints creditPointsImpl_, IMorpho morpho_, address adaptiveIrm_) {
+    constructor() {
+        _disableInitializers();
+    }
+
+    function initialize(
+        address underwritingAsset_,
+        CreditPoints creditPointsImpl_,
+        IMorpho morpho_,
+        address adaptiveIrm_
+    ) external initializer {
         _checkZeroAddress(underwritingAsset_);
         _checkZeroAddress(address(creditPointsImpl_));
         _checkZeroAddress(address(morpho_));
@@ -213,4 +224,6 @@ contract CreditTalentCenter is IOracle, AccessControl {
         applications += 1;
         return applications;
     }
+
+    function _authorizeUpgrade(address newImplementation) internal override onlyRole(DEFAULT_ADMIN_ROLE) {}
 }
