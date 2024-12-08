@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: MIT
 pragma solidity ^0.8.20;
 
+import {ICreditTalent, Application, ApplicationStatus, Underwriter} from "./interfaces/ICreditTalent.sol";
 import {CreditPoints} from "./CreditPoints.sol";
 import {FixedRateIrm} from "./FixedRateIrm.sol";
 import {ERC1967Proxy} from "@openzeppelin/contracts/proxy/ERC1967/ERC1967Proxy.sol";
@@ -13,27 +14,7 @@ import {AccessControl} from "@openzeppelin/contracts/access/AccessControl.sol";
 import {SafeERC20} from "@openzeppelin/contracts/token/ERC20/utils/SafeERC20.sol";
 import {IERC20, IERC20Metadata} from "@openzeppelin/contracts/token/ERC20/extensions/IERC20Metadata.sol";
 
-enum ApplicationStatus {
-    None,
-    Pending,
-    Approved,
-    Rejected
-}
-
-struct Underwriter {
-    address underwriter;
-    uint256 approvalAmount;
-}
-
-struct Application {
-    uint256 id;
-    address applicant;
-    bytes32 dataHash;
-    address underwriter;
-    ApplicationStatus status;
-}
-
-contract CreditTalentCenter is IOracle, AccessControl {
+contract CreditTalentCenter is ICreditTalent, IOracle, AccessControl {
     using MarketParamsLib for MarketParams;
     using SharesMathLib for uint256;
     using SafeERC20 for IERC20;
@@ -42,24 +23,6 @@ contract CreditTalentCenter is IOracle, AccessControl {
     bytes32 public constant UNDERWRITER_ROLE = 0xf63acc52fa4ad8a2695e14522f3df504db5c225cdd3d3a5acd3569b444572187;
     uint256 public constant DEFAULT_LLTV = 0.98e18;
     uint256 public constant FLOATING_RATE = type(uint256).max;
-
-    /// Events
-    event ApplicationCreated(uint256 id, address indexed applicant, bytes32 dataHash);
-    event ApplicationApproved(
-        uint256 id, address indexed applicant, address indexed underwriter, uint256 amount, uint256 interestRate
-    );
-    event ApplicationRejected(uint256 id, address indexed applicant, address indexed underwriter, string reason);
-    event UnderwriterSet(address indexed account, uint256 approvalPower);
-    event FixedRateIrmSet(uint256 indexed interestRate, address irm);
-
-    /// Custom errors
-    error CrediTalentCenter_zeroAddress();
-    error CrediTalentCenter_applicationAlreadyExists();
-    error CrediTalentCenter_fixedRateIrmAlreadyExists();
-    error CreditTalentCenter_invalidApplicationId();
-    error CreditTalentCenter_applicationNotPending();
-    error CreditTalentCenter_insufficientUnderwritingPower();
-    error CreditTalentCenter_invalidInterestRate();
 
     address public immutable underwritingAsset;
     address public immutable creditPoints;
@@ -72,7 +35,7 @@ contract CreditTalentCenter is IOracle, AccessControl {
     mapping(address => uint256) public creditShares;
     mapping(uint256 => FixedRateIrm) public fixedRateIrms; // InterestRate (in WAD) => IIrm address
     mapping(address => Underwriter) public underwriters;
-    mapping(address => Application) public applicationInfo; // User address => Application
+    mapping(address => Application) internal _applicationInfo; // User address => Application
 
     constructor(address underwritingAsset_, CreditPoints creditPointsImpl_, IMorpho morpho_, address adaptiveIrm_) {
         _checkZeroAddress(underwritingAsset_);
@@ -99,26 +62,15 @@ contract CreditTalentCenter is IOracle, AccessControl {
     }
 
     /// View functions
+    function applicationInfo(address user_) external view override returns (Application memory) {
+        return _applicationInfo[user_];
+    }
 
     /// @inheritdoc IOracle
     function price() external view returns (uint256) {
         uint256 underwriteAssetDecimals = IERC20Metadata(underwritingAsset).decimals();
         uint256 scaleFactor = 10 ** (36 + underwriteAssetDecimals - IERC20Metadata(creditPoints).decimals());
         return scaleFactor * 10 ** underwriteAssetDecimals;
-    }
-
-    function getUserLoanInfo(address user_) external view returns (uint256 creditLine, uint256 borrowed) {
-        Application memory application = applicationInfo[user_];
-        if (application.underwriter == address(0)) {
-            return (0, 0);
-        }
-        creditLine = creditShares[application.underwriter];
-
-        MarketParams memory marketParams =
-            MarketParams(underwritingAsset, creditPoints, address(this), adpativeIrm, DEFAULT_LLTV);
-        Position memory morphoPosition = morpho.position(marketParams.id(), user_);
-        Market memory market = morpho.market(marketParams.id());
-        borrowed = uint256(morphoPosition.borrowShares).toAssetsUp(market.totalBorrowAssets, market.totalBorrowShares);
     }
 
     /// Core functions
@@ -129,9 +81,10 @@ contract CreditTalentCenter is IOracle, AccessControl {
      */
     function applyToCredit(bytes32 dataHash_) public {
         // TODO: Add signature verification
-        require(applicationInfo[msg.sender].applicant == address(0), CrediTalentCenter_applicationAlreadyExists());
+        require(_applicationInfo[msg.sender].applicant == address(0), CrediTalentCenter_applicationAlreadyExists());
         uint256 id = _useApplicationNumber();
-        applicationInfo[msg.sender] = Application(id, msg.sender, dataHash_, address(0), ApplicationStatus.Pending);
+        _applicationInfo[msg.sender] =
+            Application(id, msg.sender, dataHash_, address(0), ApplicationStatus.Pending, address(0));
         emit ApplicationCreated(id, msg.sender, dataHash_);
     }
 
@@ -141,7 +94,7 @@ contract CreditTalentCenter is IOracle, AccessControl {
      */
     function applyToUnderwrite(uint256 amount_) external {
         SafeERC20.safeTransferFrom(IERC20(underwritingAsset), msg.sender, address(this), amount_);
-        underwriters[msg.sender] = Underwriter(msg.sender, amount_);
+        underwriters[msg.sender] = Underwriter(msg.sender, amount_, new address[](0));
         _grantRole(UNDERWRITER_ROLE, msg.sender);
         CreditPoints(creditPoints).mint(address(this), amount_);
         emit UnderwriterSet(msg.sender, amount_);
@@ -152,14 +105,14 @@ contract CreditTalentCenter is IOracle, AccessControl {
      * @param user_ User address
      * @param applicationId_ Application ID
      * @param amount_ Amount of credit to approve
-     * @param iRateWad_ pass 0 for adaptive interest rate, or interest rate in WAD for fixed rate
+     * @param iRateWad_  pass type(uint256).max for adaptive interest rate, or interest rate in WAD for fixed rate
      */
     function approveCredit(address user_, uint256 applicationId_, uint256 amount_, uint256 iRateWad_)
         external
         onlyRole(UNDERWRITER_ROLE)
     {
-        require(applicationInfo[user_].id == applicationId_, CreditTalentCenter_invalidApplicationId());
-        require(applicationInfo[user_].status == ApplicationStatus.Pending, CreditTalentCenter_applicationNotPending());
+        require(_applicationInfo[user_].id == applicationId_, CreditTalentCenter_invalidApplicationId());
+        require(_applicationInfo[user_].status == ApplicationStatus.Pending, CreditTalentCenter_applicationNotPending());
         require(underwriters[msg.sender].approvalAmount >= amount_, CreditTalentCenter_insufficientUnderwritingPower());
 
         address rateModel = iRateWad_ == FLOATING_RATE ? adpativeIrm : address(fixedRateIrms[iRateWad_]);
@@ -169,8 +122,11 @@ contract CreditTalentCenter is IOracle, AccessControl {
         creditShares[msg.sender] += amount_;
         totalcreditShares += amount_;
 
-        applicationInfo[user_].status = ApplicationStatus.Approved;
-        applicationInfo[user_].underwriter = msg.sender;
+        _applicationInfo[user_].status = ApplicationStatus.Approved;
+        _applicationInfo[user_].underwriter = msg.sender;
+        _applicationInfo[user_].irm = rateModel;
+
+        underwriters[msg.sender].approvedApplicants.push(user_);
 
         MarketParams memory marketParams =
             MarketParams(underwritingAsset, creditPoints, address(this), rateModel, DEFAULT_LLTV);
@@ -185,9 +141,9 @@ contract CreditTalentCenter is IOracle, AccessControl {
         external
         onlyRole(UNDERWRITER_ROLE)
     {
-        require(applicationInfo[user_].id == applicationId_, CreditTalentCenter_invalidApplicationId());
-        require(applicationInfo[user_].status == ApplicationStatus.Pending, CreditTalentCenter_applicationNotPending());
-        applicationInfo[user_].status = ApplicationStatus.Rejected;
+        require(_applicationInfo[user_].id == applicationId_, CreditTalentCenter_invalidApplicationId());
+        require(_applicationInfo[user_].status == ApplicationStatus.Pending, CreditTalentCenter_applicationNotPending());
+        _applicationInfo[user_].status = ApplicationStatus.Rejected;
         emit ApplicationRejected(applicationId_, user_, msg.sender, reason_);
     }
 
