@@ -5,6 +5,7 @@ import {Test} from "forge-std/Test.sol";
 import {VmSafe} from "forge-std/StdUtils.sol";
 import {console} from "forge-std/console.sol";
 import {CreditTalentCenter} from "../src/CreditTalentCenter.sol";
+import {UICreditTalentHelper} from "../src/UICreditTalentHelper.sol";
 import {CreditPoints} from "../src/CreditPoints.sol";
 import {MockToken} from "./mocks/MockToken.sol";
 import {MarketParamsLib} from "@morpho/contracts/libraries/MarketParamsLib.sol";
@@ -149,6 +150,43 @@ contract TestIntegrationCrediTalentCenter is Test {
         vm.prank(applicant);
         vm.expectRevert();
         morpho.withdrawCollateral(marketParams, tenThousandXocs, applicant, applicant);
+    }
+
+    function test_uiHelper() public {
+        address applicant = User1.addr;
+        do_applyToCredit(applicant);
+
+        address underWriter = User2.addr;
+        uint256 tenThousandXocs = 10000e18;
+        do_applyToUnderwrite(underWriter, tenThousandXocs);
+
+        uint256 floatingRate = type(uint256).max;
+        vm.prank(underWriter);
+        talentCenter.approveCredit(applicant, 1, tenThousandXocs, floatingRate);
+
+        IMorpho morpho = IMorpho(MORPHO);
+
+        MarketParams memory marketParams = MarketParams({
+            loanToken: address(xocolatl),
+            collateralToken: address(creditPoints),
+            oracle: address(talentCenter),
+            irm: MOPRHO_ADAPTIVEIRM,
+            lltv: talentCenter.DEFAULT_LLTV()
+        });
+
+        uint256 fiveThousandXocs = 5000e18;
+        vm.prank(applicant);
+        morpho.borrow(marketParams, fiveThousandXocs, 0, applicant, applicant);
+
+        assertEq(xocolatl.balanceOf(applicant), fiveThousandXocs);
+
+        UICreditTalentHelper uiHelper = new UICreditTalentHelper();
+        (uint256 creditLine, uint256 debtBalance, uint256 interestRatePerSecond) =
+            uiHelper.getUserLoanInfo(address(talentCenter), applicant);
+
+        assertEq(creditLine, tenThousandXocs);
+        assertEq(debtBalance, fiveThousandXocs);
+        assertEq(interestRatePerSecond > 0, true);
     }
 
     function load_tokens_to_user(MockToken token, address user, uint256 amount) internal {

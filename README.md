@@ -5,6 +5,8 @@ make active decision on which users to lend based on different types of scoring 
 
 ### Testnet Deployments
 
+UICreditTalentHelper: [0xb99737fbf4252a521389d47256e4938e0f030ed1](https://sepolia.basescan.org/address/0xb99737fbf4252a521389d47256e4938e0f030ed1)
+
 Xocolatl ERC20 address: [0x4eE906B7135bDBdfC83FE40b8f2156C99FCB64c2](https://sepolia.basescan.org/address/0x4eE906B7135bDBdfC83FE40b8f2156C99FCB64c2)  
 CreditTalentCenter (XOC): [0xBD03d38828Bf0D56f1d325F96d4d48d4a2fa3549](https://sepolia.basescan.org/address/0xBD03d38828Bf0D56f1d325F96d4d48d4a2fa3549)
 
