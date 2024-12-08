@@ -50,6 +50,16 @@ interface ICreditTalent {
     function DEFAULT_LLTV() external view returns (uint256);
     function adpativeIrm() external view returns (address);
     function morpho() external view returns (IMorpho);
-    function applicationInfo(address user) external view returns (Application memory);
+    function applicationInfo(address user)
+        external
+        view
+        returns (
+            uint256 id,
+            address applicant,
+            bytes32 dataHash,
+            address underwriter,
+            ApplicationStatus status,
+            address irm
+        );
     function creditShares(address underwriter) external view returns (uint256);
 }

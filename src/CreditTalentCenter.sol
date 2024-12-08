@@ -62,8 +62,27 @@ contract CreditTalentCenter is ICreditTalent, IOracle, AccessControl {
     }
 
     /// View functions
-    function applicationInfo(address user_) external view override returns (Application memory) {
-        return _applicationInfo[user_];
+    function applicationInfo(address user_)
+        external
+        view
+        override
+        returns (
+            uint256 id,
+            address applicant,
+            bytes32 dataHash,
+            address underwriter,
+            ApplicationStatus status,
+            address irm
+        )
+    {
+        return (
+            _applicationInfo[user_].id,
+            _applicationInfo[user_].applicant,
+            _applicationInfo[user_].dataHash,
+            _applicationInfo[user_].underwriter,
+            _applicationInfo[user_].status,
+            _applicationInfo[user_].irm
+        );
     }
 
     /// @inheritdoc IOracle

@@ -23,15 +23,16 @@ contract UICreditTalentHelper {
      * @param user from whom to get loan information
      * @return creditLine amount approved by underwriter to user
      * @return debtBalance borrowed + accrued interest amount by user currently
-     * @return borrowAPY (scaled by 1e27)
+     * @return interestRatePerSecond scaled 1e18 (see https://docs.morpho.org/morpho/contracts/irm/#borrow-apy to convert to APY)
      */
     function getUserLoanInfo(address creditCenter, address user)
         external
         view
-        returns (uint256 creditLine, uint256 debtBalance, uint256 borrowAPY)
+        returns (uint256 creditLine, uint256 debtBalance, uint256 interestRatePerSecond)
     {
         CreditTalentCenter creditTalent = CreditTalentCenter(creditCenter);
-        Application memory application = creditTalent.applicationInfo(user);
+        Application memory application;
+        (,,, application.underwriter, application.status, application.irm) = creditTalent.applicationInfo(user);
         if (application.underwriter == address(0) || application.status != ApplicationStatus.Approved) {
             return (0, 0, 0);
         }
@@ -43,7 +44,7 @@ contract UICreditTalentHelper {
         MarketParams memory marketParams = MarketParams(
             creditTalent.underwritingAsset(),
             creditTalent.creditPoints(),
-            address(this),
+            address(creditTalent),
             irm,
             creditTalent.DEFAULT_LLTV()
         );
@@ -51,31 +52,6 @@ contract UICreditTalentHelper {
         Market memory market = morpho.market(marketParams.id());
         debtBalance =
             uint256(morphoPosition.borrowShares).toAssetsUp(market.totalBorrowAssets, market.totalBorrowShares);
-        borrowAPY = _convertToAPY(IIrm(irm).borrowRateView(marketParams, market));
-    }
-
-    /**
-     * @dev Converts a rate per second to Annual Percentage Yield (APY)
-     * @param ratePerSecond The interest rate per second (scaled by 1e18)
-     * @return apy The Annual Percentage Yield (scaled by 1e27)
-     * @notice Calculates compound interest with continuous compounding
-     * @notice APY = (1 + rate)^(seconds in year) - 1
-     */
-    function _convertToAPY(uint256 ratePerSecond) internal pure returns (uint256 apy) {
-        // Adjust rate to ray scale by multiplying by 1e9
-        uint256 adjustedRatePerSecond = ratePerSecond * (RAY / SCALING_FACTOR);
-
-        // Compound the rate for a year
-        // This calculates (1 + r)^t - 1, where:
-        // r = interest rate per compounding period
-        // t = number of compounding periods (seconds in a year)
-        uint256 compoundedRate = RAY;
-        for (uint256 i = 0; i < SECONDS_PER_YEAR; i++) {
-            compoundedRate = (compoundedRate * (adjustedRatePerSecond + RAY)) / RAY;
-        }
-
-        // Subtract the initial principal to get the yield
-        apy = compoundedRate - RAY;
-        return apy;
+        interestRatePerSecond = IIrm(irm).borrowRateView(marketParams, market);
     }
 }
